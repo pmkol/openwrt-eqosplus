@@ -8,7 +8,38 @@ USE_PROCD=1
 
 NAME=eqosplus
 LOCK="/var/lock/$NAME.lock"
-CR=/etc/crontabs/root
+
+disable_offload() {
+	if [ $(uci -q show firewall.@defaults[0] | grep -c flow_offloading) -ge 1 ]; then
+		echo flow_offloading > /etc/.eqosplus_offload
+		uci -q del firewall.@defaults[0].flow_offloading
+		uci commit firewall
+		/etc/init.d/firewall reload >/dev/null 2>&1
+	elif [ $(uci -q show firewall.@defaults[0] | grep -c shortcut_fe) -ge 1 ]; then
+		uci -q get firewall.@defaults[0].shortcut_fe_module > /etc/.eqosplus_offload
+		uci -q del firewall.@defaults[0].shortcut_fe
+		uci -q del firewall.@defaults[0].shortcut_fe_module
+		uci commit firewall
+		/etc/init.d/firewall reload >/dev/null 2>&1
+		/etc/init.d/shortcut-fe restart
+	fi
+}
+
+enable_offload() {
+	offload_mode=$(cat /etc/.eqosplus_offload)
+	rm -f /etc/.eqosplus_offload
+	if [ "$offload_mode" = "flow_offloading" ]; then
+		uci set firewall.@defaults[0].flow_offloading='1'
+		uci commit firewall
+		/etc/init.d/firewall reload >/dev/null 2>&1
+	else
+		uci set firewall.@defaults[0].shortcut_fe='1'
+		uci set firewall.@defaults[0].shortcut_fe_module="$offload_mode"
+		uci commit firewall
+		/etc/init.d/firewall reload >/dev/null 2>&1
+		/etc/init.d/shortcut-fe restart
+	fi
+}
 
 start_instance() {
 	 procd_open_instance
@@ -20,17 +51,10 @@ start_instance() {
 
 _eqosplus_start() {
 	 if [ "$(grep -c 'option enable .1.' /etc/config/$NAME 2>/dev/null)" -gt "0" ]; then
-	 if [ x$(uci -q get turboacc.config.sw_flow) = 'x1' ] || [ x$(uci -q get turboacc.config.sfe_flow) = 'x1' ]  ;then
-	         uci -q set turboacc.config.sw_flow='0'
-	         uci -q set turboacc.config.sfe_flow='0'
-		 uci -q set turboacc.config.hw_flow='0'
-		 uci commit turboacc
-		 /etc/init.d/turboacc restart
-	  fi
+            disable_offload
 	    touch $LOCK
 	    eqosplus start
 	    start_instance
-	    (crontab -l ; echo "00 1 * * * /etc/init.d/eqosplus start") | sort - | uniq - | crontab -
 	 fi
 }
 
@@ -47,8 +71,7 @@ service_triggers() {
 
 stop_service(){
 	kill -9 $(busybox ps -w | grep 'eqosplusctrl' | grep -v 'grep' | awk '{print $1}') >/dev/null 2>&1
-	sed -i '/eqosplus/d' $CR >/dev/null 2>&1
 	rm -f $LOCK 2>/dev/null
 	eqosplus stop
+        [ -f "/etc/.eqosplus_offload" ] && enable_offload
 }
-
