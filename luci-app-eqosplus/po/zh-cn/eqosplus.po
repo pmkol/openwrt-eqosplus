@@ -1,9 +1,9 @@
 
 msgid "Eqosplus"
-msgstr "定时限速"
+msgstr "网速限制"
 
 msgid "Network speed limit"
-msgstr "定时网速限制"
+msgstr "网速限制"
 
 msgid "Running state"
 msgstr "运行状态"
